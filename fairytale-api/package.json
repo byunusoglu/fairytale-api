@@ -1,9 +1,0 @@
-{
-    "name": "fairytale-api",
-    "private": true,
-    "type": "module",
-    "dependencies": {
-      "openai": "^4.0.0"
-    }
-  }
-  
