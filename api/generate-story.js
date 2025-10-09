@@ -1,5 +1,5 @@
 // /api/generate-story.js
-// Edge Function — generates a kids' fairytale from a transcript
+// Edge Function — generates a kids' fairytale from a transcript + selects ambience automatically
 
 import OpenAI from "openai";
 export const config = { runtime: "edge" };
@@ -7,7 +7,7 @@ export const config = { runtime: "edge" };
 // 🔒 EXACT origins that are allowed to call this API (no trailing slash)
 const ALLOWED_ORIGINS = new Set([
   "https://byunusoglu.github.io", // ← your GitHub Pages origin
-  "http://127.0.0.1:5500",        // ← allow local testing with VS Code Live Server (optional)
+  "http://127.0.0.1:5500",        // ← allow local testing with VS Code Live Server
   "http://localhost:5500"         // ← optional
 ]);
 
@@ -30,7 +30,7 @@ export default async function handler(req) {
     return new Response(null, { status: 204, headers });
   }
 
-  // Health check / quick config echo (helpful in browser)
+  // Health check
   if (req.method === "GET") {
     return new Response(
       JSON.stringify({
@@ -52,12 +52,12 @@ export default async function handler(req) {
   }
 
   try {
-    // Parse body
+    // Parse request body
     const body = await req.json().catch(() => ({}));
     const transcript = (body.transcript || "").toString().trim();
-    const language = (body.language || "en-GB").toString(); // hint; auto-detect anyway
+    const language = (body.language || "en-GB").toString();
 
-    // Early guards
+    // Guards
     if (!ALLOWED_ORIGINS.has(origin)) {
       return new Response(JSON.stringify({ error: "CORS_ORIGIN_DENIED", origin }), {
         status: 403,
@@ -81,7 +81,7 @@ export default async function handler(req) {
 
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    // Prompts
+    // === STORY PROMPT ===
     const systemPrompt = `
 You write short, soothing fairytales for ages 3–6. Use simple sentences, warm tone, gentle humor.
 Length ~400–700 words (~3–5 minutes read). No scary or violent content.
@@ -106,7 +106,7 @@ TASK:
 3) Output clean markdown only (no code fences).
 `.trim();
 
-    // Call OpenAI (Responses API)
+    // === Generate the story ===
     const resp = await openai.responses.create({
       model: "gpt-4o-mini",
       input: [
@@ -117,12 +117,35 @@ TASK:
 
     const story = resp.output_text || "Sorry, I couldn’t create the story.";
 
-    return new Response(JSON.stringify({ story }), {
+    // === Infer ambience background from the story ===
+    const ambiencePrompt = `
+From the story below, choose the single best ambience background for bedtime:
+Options: forest, ocean, night, castle, rain, pad
+Return ONLY one of these words, no punctuation or explanation.
+
+Story:
+${story}
+`.trim();
+
+    let ambience = "pad"; // fallback
+    try {
+      const ambResp = await openai.responses.create({
+        model: "gpt-4o-mini",
+        input: ambiencePrompt
+      });
+      ambience = (ambResp.output_text || "pad").trim().toLowerCase();
+      if (!["forest", "ocean", "night", "castle", "rain", "pad"].includes(ambience))
+        ambience = "pad";
+    } catch (_) {
+      ambience = "pad";
+    }
+
+    // === Respond with both story and ambience ===
+    return new Response(JSON.stringify({ story, ambience }), {
       status: 200,
       headers: { ...headers, "Content-Type": "application/json" }
     });
   } catch (err) {
-    // Log internally; return safe error
     console.error("generate-story error:", err);
     return new Response(JSON.stringify({ error: "SERVER_ERROR" }), {
       status: 500,
